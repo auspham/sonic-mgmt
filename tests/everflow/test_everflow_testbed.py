@@ -602,12 +602,9 @@ class EverflowIPv4Tests(BaseEverflowTest):
                 if setup_info[dest_port_type]["src_port_lag_name"] != "Not Applicable":
                     bind_interface = setup_info[dest_port_type]["src_port_lag_name"]
 
-            # Temp change for multi-asic to create acl table in host and namespace
-            # Will be removed once CLI is command is enahnced to work across all namespaces.
-            self.apply_acl_table_config(everflow_dut, table_name, table_type, config_method, [bind_interface])
-            if bind_interface_namespace:
-                self.apply_acl_table_config(everflow_dut, table_name, table_type, config_method,
-                                            [bind_interface], bind_interface_namespace)
+            self.apply_acl_table_config(everflow_dut, table_name, table_type, config_method,
+                                        [bind_interface], bind_interface_namespace)
+
             # Add rule to match on DSCP
             self.apply_acl_rule_config(everflow_dut,
                                        table_name,
