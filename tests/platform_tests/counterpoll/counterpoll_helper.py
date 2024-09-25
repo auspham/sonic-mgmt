@@ -1,9 +1,12 @@
+from tests.common.devices.sonic_asic import SonicAsic
 from tests.platform_tests.counterpoll.counterpoll_constants import CounterpollConstants
 
 
 class ConterpollHelper:
     @staticmethod
     def get_counterpoll_show_output(duthost):
+        if isinstance(duthost, SonicAsic):
+            return duthost.sonichost.show_and_parse(f"{duthost.ns_arg}{CounterpollConstants.COUNTERPOLL_SHOW}")
         return duthost.show_and_parse(CounterpollConstants.COUNTERPOLL_SHOW)
 
     @staticmethod

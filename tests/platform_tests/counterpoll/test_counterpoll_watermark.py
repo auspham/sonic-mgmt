@@ -11,7 +11,7 @@ import pytest
 from tests.common.config_reload import config_reload
 from tests.common.fixtures.duthost_utils import backup_and_restore_config_db    # noqa F401
 from tests.common.helpers.assertions import pytest_assert
-from tests.common.helpers.sonic_db import redis_get_keys
+from tests.common.helpers.sonic_db import SonicDbCli, redis_get_keys
 from tests.common.utilities import get_inventory_files, get_host_visible_vars
 from tests.common.utilities import skip_release, wait_until
 from tests.common.reboot import reboot
@@ -66,7 +66,7 @@ def check_counters_populated(duthost, key):
 
 
 def test_counterpoll_queue_watermark_pg_drop(duthosts, localhost, enum_rand_one_per_hwsku_hostname, dut_vars,
-                                             backup_and_restore_config_db):     # noqa F811
+                                             backup_and_restore_config_db, enum_rand_one_asic_index):   # noqa F811
     """
     @summary: Verify FLEXCOUNTERS_DB and COUNTERS_DB content after `counterpoll queue/watermark/queue enable`
 
@@ -84,7 +84,9 @@ def test_counterpoll_queue_watermark_pg_drop(duthosts, localhost, enum_rand_one_
            no WATERMARK or QUEUE stats in FLEX_COUNTER_DB
     4. enables all three counterpolls (queue,watermark,pg-drop) and count stats per type
     """
-    duthost = duthosts[enum_rand_one_per_hwsku_hostname]
+    selected_dut = duthosts[enum_rand_one_per_hwsku_hostname]
+    duthost = selected_dut.get_asic_or_sonic_host(enum_rand_one_asic_index)
+
     skip_release(duthost, ["202205", "202111", "202106", "202012", "201911", "201811", "201803"])
 
     counted_dict = {}
@@ -132,7 +134,9 @@ def test_counterpoll_queue_watermark_pg_drop(duthosts, localhost, enum_rand_one_
         for map_to_verify in maps_to_verify:
             map_prefix = map_to_verify['prefix']
             maps = map_to_verify[MAPS]
-            map_output = redis_get_keys(duthost, 'COUNTERS_DB', MAPS_LONG_PREFIX.format(map_prefix))
+            sonic_db_cli = SonicDbCli(duthost, 'COUNTERS_DB')
+            map_output = sonic_db_cli.get_keys(MAPS_LONG_PREFIX.format(map_prefix))
+
             map = []
             failed = ""
             for map_entry in maps:
@@ -147,10 +151,11 @@ def test_counterpoll_queue_watermark_pg_drop(duthosts, localhost, enum_rand_one_
             pytest_assert("" == failed, failed)
             pytest_assert(len(map) == 0, "{} maps mismatch, one or more queue was not found in redis COUNTERS_DB"
                           .format(map_prefix))
-
     failed_list = []
+
     with allure.step("Verifying {} STATS in FLEX_COUNTER_DB on {}...".format(tested_counterpoll, duthost.hostname)):
-        stats_output = redis_get_keys(duthost, 'FLEX_COUNTER_DB', '*{}*'.format(map_prefix))
+        sonic_db_cli = SonicDbCli(duthost, 'FLEX_COUNTER_DB')
+        stats_output = sonic_db_cli.get_keys("*{}*".format(map_prefix))
         counted = 0
         # build expected counterpoll stats vs unexpected
         expected_types = []
@@ -236,8 +241,8 @@ def verify_counterpoll_status(duthost, counterpoll_list, expected):
 
 
 def count_watermark_stats_in_counters_db(duthost):
-    watermark_stats_output = redis_get_keys(duthost, 'COUNTERS_DB', '*{}*'
-                                            .format(CounterpollConstants.WATERMARK.upper()))
+    sonic_db_cli = SonicDbCli(duthost, 'COUNTERS_DB')
+    watermark_stats_output = sonic_db_cli.get_keys('*{}*'.format(CounterpollConstants.WATERMARK.upper()))
     watermark_stats = {}
     for watermark_type in WATERMARK_COUNTERS_DB_STATS_TYPE:
         watermark_stats[watermark_type] = 0
