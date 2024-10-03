@@ -606,7 +606,15 @@ class EverflowIPv4Tests(BaseEverflowTest):
 
             # Temp change for multi-asic to create acl table in host and namespace
             # Will be removed once CLI is command is enahnced to work across all namespaces.
-            self.apply_acl_table_config(everflow_dut, table_name, table_type, config_method, [bind_interface])
+
+            # For cisco partform with asics, Portchannel member on host will be using alias instead of portname
+            if "cisco" in everflow_dut.facts['asic_type'] and everflow_dut.is_multi_asic:
+                name_alias_map = everflow_dut.get_extended_minigraph_facts(tbinfo)["minigraph_port_name_to_alias_map"]
+                alias_interface = name_alias_map[bind_interface]
+                self.apply_acl_table_config(everflow_dut, table_name, table_type, config_method, [alias_interface])
+            else:
+                self.apply_acl_table_config(everflow_dut, table_name, table_type, config_method, [bind_interface])
+
             if bind_interface_namespace:
                 self.apply_acl_table_config(everflow_dut, table_name, table_type, config_method,
                                             [bind_interface], bind_interface_namespace)
