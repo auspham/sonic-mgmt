@@ -1,0 +1,7 @@
+chassis_db_address={{ chassis_db_address }}
+midplane_subnet={{ midplane_subnet }}
+{% if card_type == 'supervisor' %}
+{{'start_chassis_db=1'}}
+{{'lag_id_start=1'}}
+{{'lag_id_end=1024'}}
+{% endif %}

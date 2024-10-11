@@ -1,0 +1,139 @@
+# This Playbook run time generate and deploy configuration file needed for virtual SONiC T2 chassis based on a testbed topology specified in vtestbed.yml
+#
+# To generate and deploy configurations files for virtual SONiC chassis matching the VM topology please use following command
+# ansible-playbook -i veos_vtb testbed_config_vchassis.yml -l sonic_inventory_hostnames -e testbed_name=vms1-1 [-e deploy=true]
+
+# Parameters
+# -l str-msn2700-01          - the sonic_inventory_hostname you are going to generate config files for
+# -e testbed_name=vms1-1     - the testbed name specified in testbed.csv file
+#                              (if you give 'testbed_name' option, will use info from testbed and ignore topo and vm_base options)
+# -e vm_file=veos            - the virtual machine file name
+# -e deploy=True             - if deploy the newly generated config files to the target DUT, default is false if not defined
+#
+#
+####################################################################################################################################################################################
+
+- hosts: sonic
+  gather_facts: False
+  tasks:
+  - name: Check that variable testbed_name is defined
+    fail: msg="Define testbed_name variable with -e testbed_name=something"
+    when: testbed_name is not defined
+
+  - debug: msg="testbed_name = {{ testbed_name }}"
+
+  - name: Check that variable topo is defined
+    fail: msg="Define topo variable with -e topo=something"
+    when: topo is not defined
+
+  - set_fact:
+      base_topo: "{{ topo.split('_') | first }}"
+  
+  - debug: msg="base_topo = {{ base_topo }}"
+
+  - name: Check that base topo is "t2"
+    fail: msg="This playbook is only for T2 topologies"
+    when: base_topo != "t2"
+
+  - name: Load topo variables
+    include_vars: "vars/topo_{{ topo }}.yml"
+
+  - name: Set midplane address
+    set_fact:
+      midplane_address: "{{ topology['DUT']['vs_chassis']['midplane_address'][ansible_play_batch.index(inventory_hostname)] }}"
+
+  - debug: msg="s/^exit 0/sudo ip address add {{ hostvars[inventory_hostname].ansible_host }}\/{{ hostvars[inventory_hostname].mgmt_prefixlen }} dev eth0\nsudo ip route add 0.0.0.0\/0 via {{ hostvars[inventory_hostname].mgmt_gw }} table default\nexit 0/"
+
+  - name: Add mgmt address config commands to "/etc/rc.local"
+    shell: sed -i "s/^exit 0/sudo hostname {{ inventory_hostname }}\n\ 
+           sudo ip address add {{ hostvars[inventory_hostname].ansible_host }}\/{{ hostvars[inventory_hostname].mgmt_prefixlen }} dev eth0\n\ 
+           sudo ip route add 0.0.0.0\/0 via {{ hostvars[inventory_hostname].mgmt_gw }} table default\nexit 0/" "/etc/rc.local"
+    become: true
+
+  - name: Add midplane address config commands to "/etc/rc.local"
+    shell: sed -i "s/^exit 0/sudo ip link set dev eth1 down\nsudo ip link set dev eth1 name eth1-midplane\nsudo ip address add {{ midplane_address.replace("/", "\/") }} dev eth1-midplane\nsudo ip link set dev eth1-midplane up\nexit 0/" "/etc/rc.local"
+    become: true
+
+  - name: Set facts
+    set_fact:
+      hwsku: "{{ hostvars[inventory_hostname].hwsku }}"
+      num_asic: "{{ hostvars[inventory_hostname]['num_asics'] | default(1) }}"
+      card_type: "{{ hostvars[inventory_hostname].card_type | default('linecard') }}"
+      macsec_enabled: "{{ hostvars[inventory_hostname].macsec_enabled | default(false) }}"
+      slot_num: "{{ hostvars[inventory_hostname].slot_num }}"
+
+  - block:
+    - name: Set init kvm platform
+      set_fact:
+        platform: "x86_64-kvm_x86_64-r0"
+
+    - name: Change platform if 4 asics
+      set_fact:
+        platform: "x86_64-kvm_x86_64_4_asic-r0"
+      when: num_asic == 4
+
+    - name: Change platform if 6 asics
+      set_fact:
+        platform: "x86_64-kvm_x86_64_6_asic-r0"
+      when: num_asic == 6
+
+    - name: Create asic.conf
+      shell: echo "NUM_ASIC={{ num_asic }}" > /usr/share/sonic/device/{{ platform }}/asic.conf
+      become: true
+      when: card_type == "linecard"
+    
+    - name: Set chassis db address
+      set_fact:
+        chassis_db_address: "{{ topology['DUT']['vs_chassis']['chassis_db_ip'] }}"
+
+    - name: Set midplane subnet
+      set_fact:
+        midplane_subnet: "{{ topology['DUT']['vs_chassis']['midplane_subnet'] }}"
+
+    - debug: msg="midplane_subnet = {{ midplane_subnet }}"
+
+    - name: Create chassisdb.conf 
+      template: src=templates/chassisdb.conf.j2
+                dest=/usr/share/sonic/device/{{ platform }}/chassisdb.conf
+      become: true
+
+    - name: Create platform_env.conf
+      shell: echo "macsec_enabled=1" > /usr/share/sonic/device/{{ platform }}/platform_env.conf
+      become: true
+      when: card_type == "linecard" and macsec_enabled
+
+    - name: Create vs_chassis_metadata.json
+      template: src=templates/vs_chassis_metadata.json.j2
+                dest=/etc/sonic/vs_chassis_metadata.json
+      become: true
+
+  - name: remove critical services if the linecard is multi-asic
+    shell: systemctl stop {{ item }}; systemctl disable {{ item }}; systemctl mask {{ item }}; docker rm -f {{ item }}
+    become: true
+    with_items:
+      - swss
+      - syncd
+      - bgp
+      - teamd
+      - gbsyncd
+    when: num_asic > 1 and card_type == "linecard"
+
+  - name: reboot DUTs
+    command: reboot
+    # async: 600
+    # poll: 0
+    become: true
+    when: deploy is defined and deploy|bool == true
+
+  - name: Wait for switch to become reachable again
+    become: false
+    local_action: wait_for
+    args:
+      host: "{{ ansible_host }}"
+      port: 22
+      state: started
+      search_regex: "OpenSSH_[\\w\\.]+ Debian"
+      delay: 10
+      timeout: 600
+    changed_when: false
+    when: deploy is defined and deploy|bool == true
