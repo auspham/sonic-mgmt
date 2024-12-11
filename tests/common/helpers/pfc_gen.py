@@ -11,6 +11,7 @@ import logging
 import logging.handlers
 import time
 import multiprocessing
+import threading
 
 from socket import socket, AF_PACKET, SOCK_RAW
 
@@ -19,6 +20,38 @@ logger.setLevel(logging.DEBUG)
 
 # Maximum number of processes to be created
 MAX_PROCESS_NUM = 4
+
+
+def send_packet(interface, packet, packet_interval):
+    s = socket(AF_PACKET, SOCK_RAW)
+    s.bind((interface, 0))
+    s.send(packet)
+    if packet_interval > 0:
+        time.sleep(packet_interval)
+    s.close()
+
+
+def send_packet_single_socket(args):
+    """
+    Function to trigger for --parallel-send option
+    """
+
+    # thread per socket
+    max_parallel_thread = MAX_PROCESS_NUM * 2
+
+    interface, packet, iteration, packet_interval = args
+
+    threads = []
+
+    try:
+        for chunk in range(0, iteration / max_parallel_thread):
+            for _ in range(0, max_parallel_thread):
+                thread = threading.Thread(target=send_packet, args=(interface, packet, packet_interval))
+                threads.append(thread)
+                thread.start()
+    finally:
+        for thread in threads:
+            thread.join()
 
 
 class PacketSender():
@@ -40,8 +73,15 @@ class PacketSender():
         self.packet_interval = interval
         self.process = None
         self.packet = packet
+        self.interfaces = interfaces
 
-    def send_packets(self):
+    def send_packets(self, parallel=False):
+        if not parallel:
+            self.send_packets_no_parallel()
+        else:
+            self.send_packets_parallel()
+
+    def send_packets_no_parallel(self):
         iteration = self.packet_num
         while iteration > 0:
             for s in self.sockets:
@@ -49,6 +89,16 @@ class PacketSender():
                 if self.packet_interval > 0:
                     time.sleep(self.packet_interval)
             iteration -= 1
+
+    def send_packets_parallel(self):
+        pool = multiprocessing.Pool(processes=len(self.sockets))
+
+        try:
+            args = [(interface, self.packet, self.packet_num, self.packet_interval) for interface in self.interfaces]
+            pool.map_async(send_packet_single_socket, args)
+        finally:
+            pool.close()
+            pool.join()
 
     def start(self):
         self.process = multiprocessing.Process(target=self.send_packets)
@@ -80,6 +130,8 @@ def main():
                       help="Interval sending pfc frame", metavar="send_pfc_frame_interval", default=0)
     parser.add_option("-m", "--multiprocess", action="store_true", dest="multiprocess",
                       help="Use multiple processes to send packets", default=False)
+    parser.add_option("--parallel-send", action="store_true", dest="parallel",
+                      help="Enable parallel send, use 1 process for each socket", default=False)
 
     (options, args) = parser.parse_args()
 
@@ -196,7 +248,7 @@ def main():
     else:
         sender = PacketSender(interfaces, packet, options.num, options.send_pfc_frame_interval)
         logger.debug(pre_str + '_STORM_START')
-        sender.send_packets()
+        sender.send_packets(options.parallel)
 
     logger.debug(pre_str + '_STORM_END')
 
