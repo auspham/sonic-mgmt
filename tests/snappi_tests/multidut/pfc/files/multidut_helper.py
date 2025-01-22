@@ -17,7 +17,8 @@ from tests.common.snappi_tests.traffic_generation import setup_base_traffic_conf
     verify_in_flight_buffer_pkts, verify_unset_cev_pause_frame_count, verify_tx_frame_count_dut, \
     verify_rx_frame_count_dut
 from tests.common.snappi_tests.snappi_test_params import SnappiTestParams
-from tests.common.snappi_tests.read_pcap import validate_pfc_frame
+from tests.common.cisco_data import is_cisco_device
+from tests.common.snappi_tests.read_pcap import validate_pfc_frame, validate_pfc_frame_cisco
 
 
 logger = logging.getLogger(__name__)
@@ -189,7 +190,7 @@ def run_pfc_test(api,
         # PFC pause frame capture is not requested
         valid_pfc_frame_test = False
 
-    if valid_pfc_frame_test:
+    if valid_pfc_frame_test and not is_cisco_device(egress_duthost):
         snappi_extra_params.traffic_flow_config.pause_flow_config["flow_dur_sec"] = DATA_FLOW_DURATION_SEC + \
             data_flow_delay_sec + SNAPPI_POLL_DELAY_SEC + PAUSE_FLOW_DUR_BASE_SEC
         snappi_extra_params.traffic_flow_config.pause_flow_config["flow_traffic_type"] = \
@@ -244,7 +245,11 @@ def run_pfc_test(api,
 
     # Verify PFC pause frames
     if valid_pfc_frame_test:
-        is_valid_pfc_frame, error_msg = validate_pfc_frame(snappi_extra_params.packet_capture_file + ".pcapng")
+        if not is_cisco_device(duthost):
+            is_valid_pfc_frame, error_msg = validate_pfc_frame(snappi_extra_params.packet_capture_file + ".pcapng")
+        else:
+            is_valid_pfc_frame, error_msg = validate_pfc_frame_cisco(
+                                                              snappi_extra_params.packet_capture_file + ".pcapng")
         pytest_assert(is_valid_pfc_frame, error_msg)
         return
 
@@ -296,9 +301,11 @@ def run_pfc_test(api,
         # Verify TX frame count on the DUT when traffic is expected to be paused
         # and only test traffic flows are generated
         verify_tx_frame_count_dut(duthost=duthost,
+                                  api=api,
                                   snappi_extra_params=snappi_extra_params)
 
         # Verify TX frame count on the DUT when traffic is expected to be paused
         # and only test traffic flows are generated
         verify_rx_frame_count_dut(duthost=duthost,
+                                  api=api,
                                   snappi_extra_params=snappi_extra_params)
