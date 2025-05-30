@@ -11,6 +11,9 @@ all:
         vms_1:
         vms_2:
     servers:
+      children:
+        server_1:
+        server_2:
       vars:
         topologies:
           - t1
@@ -83,9 +86,6 @@ all:
           - ft2-64
           - lt2-p32o64
           - lt2-o128
-      children:
-        server_1:
-        server_2:
 
 vm_host_1:
   hosts:
